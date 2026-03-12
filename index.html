@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Three.js 金属材质实验室</title>
+    <style>
+        body { margin: 0; background: #05080a; overflow: hidden; font-family: sans-serif; }
+        #gui { position: absolute; top: 20px; left: 20px; color: #86c8ff; pointer-events: none; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <div id="gui">
+        <h1>3D 实时金属渲染</h1>
+        <p>左右移动鼠标：观察高光流动</p>
+        <p>滚动滚轮：推进/拉远视角</p>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <script>
+        // --- 1. 初始化场景 (The World) ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        document.body.appendChild(renderer.domElement);
+
+        // --- 2. 核心：创建金属卡牌 (The Asset) ---
+        // 我们给卡牌一点厚度 (0.1)，看起来更像实体
+        const geometry = new THREE.BoxGeometry(2, 3, 0.1);
+        
+        // 使用物理渲染材质 MeshStandardMaterial
+        const metalMaterial = new THREE.MeshStandardMaterial({
+            color: 0x3a4b5c,      // 基础深蓝色
+            metalness: 0.9,       // 关键：0.9 以上才有金属感
+            roughness: 0.15,      // 关键：数值越小，反光越锐利
+            emissive: 0x112233,   // 微弱的自发光，增加通透感
+        });
+
+        const card = new THREE.Mesh(geometry, metalMaterial);
+        scene.add(card);
+
+        // --- 3. 灵魂：灯光布局 (The Lighting) ---
+        // 环境光：提供基础亮度，确保暗部不是纯黑
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambientLight);
+
+        // 点光源：模拟探照灯，产生流动的金属高光
+        const pointLight = new THREE.PointLight(0x86c8ff, 2); // 浅蓝色光
+        pointLight.position.set(5, 5, 5);
+        scene.add(pointLight);
+
+        // 另一个侧光：增加立体感
+        const sideLight = new THREE.PointLight(0xffffff, 1);
+        sideLight.position.set(-5, 0, 2);
+        scene.add(sideLight);
+
+        camera.position.z = 5;
+
+        // --- 4. 交互：鼠标跟随与动画 ---
+        let mouseX = 0;
+        let mouseY = 0;
+
+        window.addEventListener('mousemove', (event) => {
+            // 将坐标归一化到 -1 到 1 之间
+            mouseX = (event.clientX / window.innerWidth) * 2 - 1;
+            mouseY = -(event.clientY / window.innerHeight) * 2 + 1;
+        });
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // 让卡牌随鼠标轻微摆动
+            card.rotation.y += (mouseX * 0.5 - card.rotation.y) * 0.1;
+            card.rotation.x += (-mouseY * 0.5 - card.rotation.x) * 0.1;
+
+            // 让点光源也随鼠标移动，产生动态反射
+            pointLight.position.x = mouseX * 10;
+            pointLight.position.y = mouseY * 10;
+
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        // 响应窗口缩放
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
