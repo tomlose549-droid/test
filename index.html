@@ -1,96 +1,735 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <title>Three.js 金属材质实验室</title>
-    <style>
-        body { margin: 0; background: #05080a; overflow: hidden; font-family: sans-serif; }
-        #gui { position: absolute; top: 20px; left: 20px; color: #86c8ff; pointer-events: none; }
-        canvas { display: block; }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>棋盘地图编辑与试玩系统</title>
+  <style>
+    :root {
+      --bg: #111418;
+      --panel: #1b2026;
+      --panel-2: #242b33;
+      --text: #e9eef5;
+      --muted: #9aa9bb;
+      --accent: #58a6ff;
+      --danger: #ff6b6b;
+      --ok: #59d59b;
+      --cell-size: 34px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+    }
+    button, select, input {
+      background: var(--panel-2);
+      border: 1px solid #36414d;
+      color: var(--text);
+      border-radius: 8px;
+      padding: 6px 10px;
+    }
+    button { cursor: pointer; }
+    button:hover { border-color: var(--accent); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    header {
+      display: flex;
+      gap: 16px;
+      padding: 14px;
+      align-items: center;
+      flex-wrap: wrap;
+      background: #0f1318;
+      border-bottom: 1px solid #28323d;
+    }
+    .group {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      background: var(--panel);
+      border: 1px solid #2f3945;
+      padding: 8px;
+      border-radius: 10px;
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: 240px 1fr 240px;
+      gap: 12px;
+      padding: 12px;
+      min-height: 0;
+    }
+    aside, .right {
+      background: var(--panel);
+      border: 1px solid #2e3946;
+      border-radius: 12px;
+      padding: 12px;
+      overflow: auto;
+    }
+    .board-wrap {
+      background: var(--panel);
+      border: 1px solid #2e3946;
+      border-radius: 12px;
+      overflow: auto;
+      padding: 12px;
+      min-height: 0;
+    }
+    #board {
+      display: grid;
+      gap: 2px;
+      width: max-content;
+      user-select: none;
+      touch-action: none;
+    }
+    .cell {
+      position: relative;
+      width: var(--cell-size);
+      height: var(--cell-size);
+      border-radius: 6px;
+      border: 1px solid #1f252d;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      transition: transform 120ms ease, filter 120ms ease;
+      cursor: crosshair;
+      overflow: hidden;
+    }
+    .cell[data-terrain="FIRE"] { background: #d14b43; }
+    .cell[data-terrain="FOREST"] { background: #2f7a3f; }
+    .cell[data-terrain="ROAD"] { background: #6f7b88; }
+    .cell[data-terrain="MOUNTAIN"] { background: #2b2f35; }
+    .cell[data-terrain="WATER"] { background: #2f5fd0; }
+
+    .cell.invalid-flash {
+      animation: invalidFlash 240ms ease 2;
+    }
+    @keyframes invalidFlash {
+      0% { box-shadow: 0 0 0 0 rgba(255,255,255,.8); }
+      100% { box-shadow: 0 0 0 10px rgba(255,255,255,0); }
+    }
+
+    .symbol { opacity: .92; pointer-events: none; }
+    .player {
+      position: absolute;
+      width: 70%;
+      height: 70%;
+      border-radius: 50%;
+      background: #fff;
+      border: 2px solid #2f3640;
+      box-shadow: 0 2px 8px rgba(0,0,0,.45);
+      z-index: 2;
+      transition: transform 120ms ease;
+    }
+    .player.bump { animation: bump 170ms ease; }
+    .player.hurt { animation: hurt 280ms ease; }
+    @keyframes bump {
+      0% { transform: translate(0,0); }
+      50% { transform: translate(var(--dx,0), var(--dy,0)); }
+      100% { transform: translate(0,0); }
+    }
+    @keyframes hurt {
+      0%,100% { transform: scale(1); background:#fff; }
+      35% { transform: scale(.88); background:#ff6767; }
+      70% { transform: scale(1.08); background:#ffd3d3; }
+    }
+    .floating {
+      position: absolute;
+      right: 8px;
+      top: -6px;
+      color: #ff7d7d;
+      font-weight: 700;
+      pointer-events: none;
+      animation: float 650ms ease forwards;
+      z-index: 3;
+    }
+    @keyframes float {
+      from { opacity: 1; transform: translateY(0); }
+      to { opacity: 0; transform: translateY(-16px); }
+    }
+
+    .terrain-item {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      width: 100%;
+      margin-bottom: 8px;
+      padding: 8px;
+      border: 1px solid #3a4652;
+      border-radius: 8px;
+      cursor: pointer;
+      background: #1d232b;
+    }
+    .terrain-item.active { border-color: var(--accent); }
+    .terrain-dot { width: 14px; height: 14px; border-radius: 4px; }
+
+    .hp {
+      font-size: 28px;
+      font-weight: 800;
+      color: #ffd972;
+      margin: 8px 0;
+    }
+    .status { color: var(--muted); font-size: 14px; }
+
+    footer {
+      min-height: 42px;
+      padding: 10px 14px;
+      border-top: 1px solid #2a3541;
+      background: #0f1318;
+      color: #d6e3f3;
+    }
+
+    #gameOverModal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.55);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 20;
+    }
+    #gameOverModal.show { display: flex; }
+    .modal {
+      background: #1f2630;
+      border: 1px solid #3b4a59;
+      border-radius: 12px;
+      padding: 20px;
+      width: min(90vw, 360px);
+    }
+  </style>
 </head>
 <body>
-    <div id="gui">
-        <h1>3D 实时金属渲染</h1>
-        <p>左右移动鼠标：观察高光流动</p>
-        <p>滚动滚轮：推进/拉远视角</p>
+  <header>
+    <div class="group">
+      <label>宽<input id="widthInput" type="number" min="2" max="60" value="12" style="width:70px"/></label>
+      <label>高<input id="heightInput" type="number" min="2" max="60" value="12" style="width:70px"/></label>
+      <button id="newMapBtn">新建/改尺寸</button>
+      <button id="resetBtn">重置为道路</button>
     </div>
+    <div class="group">
+      <button id="undoBtn">撤销</button>
+      <button id="redoBtn">重做</button>
+      <span id="brushLabel" class="status">画笔：道路</span>
+    </div>
+    <div class="group">
+      <button id="modeBtn">进入试玩模式</button>
+      <button id="saveBtn">保存地图</button>
+      <button id="loadBtn">读取地图</button>
+      <input id="loadFileInput" type="file" accept="application/json" hidden />
+    </div>
+  </header>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <main>
+    <aside>
+      <h3>地形画笔</h3>
+      <div id="terrainList"></div>
+      <p class="status">编辑模式支持：单点绘制 + 鼠标拖拽框选绘制（矩形填充）。</p>
+    </aside>
 
-    <script>
-        // --- 1. 初始化场景 (The World) ---
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(window.devicePixelRatio);
-        document.body.appendChild(renderer.domElement);
+    <section class="board-wrap">
+      <div id="board"></div>
+    </section>
 
-        // --- 2. 核心：创建金属卡牌 (The Asset) ---
-        // 我们给卡牌一点厚度 (0.1)，看起来更像实体
-        const geometry = new THREE.BoxGeometry(2, 3, 0.1);
-        
-        // 使用物理渲染材质 MeshStandardMaterial
-        const metalMaterial = new THREE.MeshStandardMaterial({
-            color: 0x3a4b5c,      // 基础深蓝色
-            metalness: 0.9,       // 关键：0.9 以上才有金属感
-            roughness: 0.15,      // 关键：数值越小，反光越锐利
-            emissive: 0x112233,   // 微弱的自发光，增加通透感
-        });
+    <section class="right">
+      <h3>角色信息</h3>
+      <div>模式：<strong id="modeText">编辑模式</strong></div>
+      <div class="hp">HP: <span id="hpText">-</span></div>
+      <div>道路计数：<span id="roadCounterText">-</span></div>
+      <p class="status">试玩移动：键盘方向键 / WASD，或点击相邻格。</p>
+    </section>
+  </main>
 
-        const card = new THREE.Mesh(geometry, metalMaterial);
-        scene.add(card);
+  <footer id="tipBar">准备就绪。</footer>
 
-        // --- 3. 灵魂：灯光布局 (The Lighting) ---
-        // 环境光：提供基础亮度，确保暗部不是纯黑
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
-        scene.add(ambientLight);
+  <div id="gameOverModal">
+    <div class="modal">
+      <h3>血量为零，游戏结束！</h3>
+      <button id="restartBtn">重新开始</button>
+    </div>
+  </div>
 
-        // 点光源：模拟探照灯，产生流动的金属高光
-        const pointLight = new THREE.PointLight(0x86c8ff, 2); // 浅蓝色光
-        pointLight.position.set(5, 5, 5);
-        scene.add(pointLight);
+  <script>
+    const TERRAIN = {
+      FIRE: { key: 'FIRE', name: '火焰', color: '#d14b43', symbol: '🔥', passable: true },
+      FOREST: { key: 'FOREST', name: '森林', color: '#2f7a3f', symbol: '🌲', passable: false },
+      ROAD: { key: 'ROAD', name: '道路', color: '#6f7b88', symbol: '🛣', passable: true },
+      MOUNTAIN: { key: 'MOUNTAIN', name: '山脉', color: '#2b2f35', symbol: '⛰', passable: false },
+      WATER: { key: 'WATER', name: '湖泊', color: '#2f5fd0', symbol: '🌊', passable: false }
+    };
+    const TERRAIN_KEYS = Object.keys(TERRAIN);
 
-        // 另一个侧光：增加立体感
-        const sideLight = new THREE.PointLight(0xffffff, 1);
-        sideLight.position.set(-5, 0, 2);
-        scene.add(sideLight);
+    const state = {
+      width: 12,
+      height: 12,
+      grid: [],
+      mode: 'EDITOR',
+      brush: 'ROAD',
+      history: [],
+      historyIndex: -1,
+      dragStart: null,
+      player: null,
+      gameOver: false,
+      movingLock: false
+    };
 
-        camera.position.z = 5;
+    const el = {
+      widthInput: document.getElementById('widthInput'),
+      heightInput: document.getElementById('heightInput'),
+      newMapBtn: document.getElementById('newMapBtn'),
+      resetBtn: document.getElementById('resetBtn'),
+      undoBtn: document.getElementById('undoBtn'),
+      redoBtn: document.getElementById('redoBtn'),
+      modeBtn: document.getElementById('modeBtn'),
+      saveBtn: document.getElementById('saveBtn'),
+      loadBtn: document.getElementById('loadBtn'),
+      loadFileInput: document.getElementById('loadFileInput'),
+      terrainList: document.getElementById('terrainList'),
+      brushLabel: document.getElementById('brushLabel'),
+      board: document.getElementById('board'),
+      modeText: document.getElementById('modeText'),
+      hpText: document.getElementById('hpText'),
+      roadCounterText: document.getElementById('roadCounterText'),
+      tipBar: document.getElementById('tipBar'),
+      gameOverModal: document.getElementById('gameOverModal'),
+      restartBtn: document.getElementById('restartBtn')
+    };
 
-        // --- 4. 交互：鼠标跟随与动画 ---
-        let mouseX = 0;
-        let mouseY = 0;
+    function tip(text) {
+      el.tipBar.textContent = text;
+    }
 
-        window.addEventListener('mousemove', (event) => {
-            // 将坐标归一化到 -1 到 1 之间
-            mouseX = (event.clientX / window.innerWidth) * 2 - 1;
-            mouseY = -(event.clientY / window.innerHeight) * 2 + 1;
-        });
+    function createGrid(w, h, terrain = 'ROAD') {
+      return Array.from({ length: h }, (_, y) => (
+        Array.from({ length: w }, (_, x) => ({ x, y, terrain }))
+      ));
+    }
 
-        function animate() {
-            requestAnimationFrame(animate);
+    function cloneGrid(grid) {
+      return grid.map(row => row.map(c => ({ ...c })));
+    }
 
-            // 让卡牌随鼠标轻微摆动
-            card.rotation.y += (mouseX * 0.5 - card.rotation.y) * 0.1;
-            card.rotation.x += (-mouseY * 0.5 - card.rotation.x) * 0.1;
+    function pushHistory(changes) {
+      if (!changes.length) return;
+      state.history = state.history.slice(0, state.historyIndex + 1);
+      state.history.push(changes);
+      state.historyIndex += 1;
+      refreshUndoRedo();
+    }
 
-            // 让点光源也随鼠标移动，产生动态反射
-            pointLight.position.x = mouseX * 10;
-            pointLight.position.y = mouseY * 10;
+    function refreshUndoRedo() {
+      el.undoBtn.disabled = state.mode !== 'EDITOR' || state.historyIndex < 0;
+      el.redoBtn.disabled = state.mode !== 'EDITOR' || state.historyIndex >= state.history.length - 1;
+    }
 
-            renderer.render(scene, camera);
+    function applyCells(changes, reverse = false) {
+      for (const c of changes) {
+        const target = state.grid[c.y][c.x];
+        target.terrain = reverse ? c.before : c.after;
+      }
+    }
+
+    function undo() {
+      if (state.historyIndex < 0) return;
+      const changes = state.history[state.historyIndex];
+      applyCells(changes, true);
+      state.historyIndex -= 1;
+      renderBoard();
+      refreshUndoRedo();
+      tip('已撤销一步编辑。');
+    }
+
+    function redo() {
+      if (state.historyIndex >= state.history.length - 1) return;
+      state.historyIndex += 1;
+      const changes = state.history[state.historyIndex];
+      applyCells(changes, false);
+      renderBoard();
+      refreshUndoRedo();
+      tip('已重做一步编辑。');
+    }
+
+    function terrainSymbol(k) { return TERRAIN[k]?.symbol || '?'; }
+
+    function renderTerrainPanel() {
+      el.terrainList.innerHTML = '';
+      for (const key of TERRAIN_KEYS) {
+        const t = TERRAIN[key];
+        const item = document.createElement('button');
+        item.className = `terrain-item${state.brush === key ? ' active' : ''}`;
+        item.innerHTML = `<span class="terrain-dot" style="background:${t.color}"></span><span>${t.name} ${t.symbol}</span>`;
+        item.onclick = () => {
+          state.brush = key;
+          el.brushLabel.textContent = `画笔：${t.name}`;
+          renderTerrainPanel();
+        };
+        el.terrainList.appendChild(item);
+      }
+    }
+
+    function renderBoard() {
+      el.board.style.gridTemplateColumns = `repeat(${state.width}, var(--cell-size))`;
+      el.board.innerHTML = '';
+
+      for (let y = 0; y < state.height; y++) {
+        for (let x = 0; x < state.width; x++) {
+          const cell = state.grid[y][x];
+          const d = document.createElement('div');
+          d.className = 'cell';
+          d.dataset.x = x;
+          d.dataset.y = y;
+          d.dataset.terrain = cell.terrain;
+          d.innerHTML = `<span class="symbol">${terrainSymbol(cell.terrain)}</span>`;
+
+          d.addEventListener('mousedown', onCellMouseDown);
+          d.addEventListener('mouseenter', onCellMouseEnter);
+          d.addEventListener('mouseup', onCellMouseUp);
+          d.addEventListener('click', onCellClickPlay);
+
+          if (state.player && state.player.x === x && state.player.y === y) {
+            const p = document.createElement('div');
+            p.className = 'player';
+            d.appendChild(p);
+          }
+          el.board.appendChild(d);
         }
+      }
+      updateSideInfo();
+    }
 
-        animate();
+    function collectRectCells(a, b) {
+      const minX = Math.min(a.x, b.x), maxX = Math.max(a.x, b.x);
+      const minY = Math.min(a.y, b.y), maxY = Math.max(a.y, b.y);
+      const cells = [];
+      for (let y = minY; y <= maxY; y++) {
+        for (let x = minX; x <= maxX; x++) cells.push({ x, y });
+      }
+      return cells;
+    }
 
-        // 响应窗口缩放
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
-    </script>
+    function paintCells(cells) {
+      const changes = [];
+      for (const { x, y } of cells) {
+        const c = state.grid[y][x];
+        if (c.terrain === state.brush) continue;
+        changes.push({ x, y, before: c.terrain, after: state.brush });
+        c.terrain = state.brush;
+      }
+      if (changes.length) {
+        pushHistory(changes);
+        renderBoard();
+      }
+    }
+
+    function onCellMouseDown(e) {
+      if (state.mode !== 'EDITOR') return;
+      const x = Number(e.currentTarget.dataset.x);
+      const y = Number(e.currentTarget.dataset.y);
+      state.dragStart = { x, y };
+      e.preventDefault();
+    }
+
+    function onCellMouseEnter(_) {
+      // 可扩展：拖拽预览
+    }
+
+    function onCellMouseUp(e) {
+      if (state.mode !== 'EDITOR' || !state.dragStart) return;
+      const x = Number(e.currentTarget.dataset.x);
+      const y = Number(e.currentTarget.dataset.y);
+      const rectCells = collectRectCells(state.dragStart, { x, y });
+      paintCells(rectCells);
+      state.dragStart = null;
+    }
+
+    function isInBounds(x, y) {
+      return x >= 0 && y >= 0 && x < state.width && y < state.height;
+    }
+
+    function onCellClickPlay(e) {
+      if (state.mode !== 'PLAY' || !state.player || state.gameOver) return;
+      const x = Number(e.currentTarget.dataset.x);
+      const y = Number(e.currentTarget.dataset.y);
+      tryMoveTo(x, y);
+    }
+
+    function randomRoadCell() {
+      const roads = [];
+      for (const row of state.grid) {
+        for (const c of row) if (c.terrain === 'ROAD') roads.push(c);
+      }
+      if (!roads.length) return null;
+      return roads[Math.floor(Math.random() * roads.length)];
+    }
+
+    function startPlayMode() {
+      const spawn = randomRoadCell();
+      if (!spawn) {
+        tip('没有道路格，无法进入试玩模式。');
+        return;
+      }
+      state.mode = 'PLAY';
+      state.player = { x: spawn.x, y: spawn.y, hp: 10, roadStepCounter: 0 };
+      state.gameOver = false;
+      el.modeBtn.textContent = '返回编辑模式';
+      el.modeText.textContent = '试玩模式';
+      tip('已进入试玩模式。');
+      refreshUndoRedo();
+      renderBoard();
+    }
+
+    function backToEditorMode() {
+      state.mode = 'EDITOR';
+      state.player = null;
+      state.gameOver = false;
+      el.modeBtn.textContent = '进入试玩模式';
+      el.modeText.textContent = '编辑模式';
+      el.gameOverModal.classList.remove('show');
+      tip('已返回编辑模式。');
+      refreshUndoRedo();
+      renderBoard();
+    }
+
+    function updateSideInfo() {
+      if (!state.player) {
+        el.hpText.textContent = '-';
+        el.roadCounterText.textContent = '-';
+      } else {
+        el.hpText.textContent = state.player.hp;
+        el.roadCounterText.textContent = state.player.roadStepCounter;
+      }
+    }
+
+    function showInvalidFeedback(tx, ty, reason) {
+      const cell = [...el.board.children].find(c => Number(c.dataset.x) === tx && Number(c.dataset.y) === ty);
+      if (cell) {
+        cell.classList.add('invalid-flash');
+        setTimeout(() => cell.classList.remove('invalid-flash'), 500);
+      }
+      const p = document.querySelector('.player');
+      if (p && state.player) {
+        let dx = 0, dy = 0;
+        if (Number.isFinite(tx) && Number.isFinite(ty)) {
+          dx = Math.sign(tx - state.player.x) * 4;
+          dy = Math.sign(ty - state.player.y) * 4;
+        }
+        p.style.setProperty('--dx', `${dx}px`);
+        p.style.setProperty('--dy', `${dy}px`);
+        p.classList.remove('bump');
+        void p.offsetWidth;
+        p.classList.add('bump');
+      }
+      tip(`无法移动到该位置（${reason}）`);
+    }
+
+    function triggerFireFeedback(x, y) {
+      const p = document.querySelector('.player');
+      if (p) {
+        p.classList.remove('hurt');
+        void p.offsetWidth;
+        p.classList.add('hurt');
+      }
+      const cell = [...el.board.children].find(c => Number(c.dataset.x) === x && Number(c.dataset.y) === y);
+      if (cell) {
+        cell.classList.add('invalid-flash');
+        const f = document.createElement('div');
+        f.className = 'floating';
+        f.textContent = '-1';
+        cell.appendChild(f);
+        setTimeout(() => {
+          cell.classList.remove('invalid-flash');
+          f.remove();
+        }, 700);
+      }
+    }
+
+    function processTerrainEffect(terrain, x, y) {
+      if (!state.player) return;
+      if (terrain === 'FIRE') {
+        state.player.hp -= 1;
+        triggerFireFeedback(x, y);
+        tip('踩到火焰，HP -1');
+      } else if (terrain === 'ROAD') {
+        state.player.roadStepCounter += 1;
+        if (state.player.roadStepCounter === 2) {
+          state.player.hp = Math.min(10, state.player.hp + 1);
+          state.player.roadStepCounter = 0;
+          tip('道路累计2步，HP +1');
+        } else {
+          tip('进入道路，累计步数 +1');
+        }
+      }
+
+      if (state.player.hp <= 0) {
+        state.player.hp = 0;
+        state.gameOver = true;
+        el.gameOverModal.classList.add('show');
+      }
+    }
+
+    function tryMoveTo(tx, ty) {
+      if (!state.player || state.movingLock) return;
+      if (!isInBounds(tx, ty)) {
+        showInvalidFeedback(tx, ty, '越界');
+        return;
+      }
+      const dist = Math.abs(tx - state.player.x) + Math.abs(ty - state.player.y);
+      if (dist !== 1) {
+        showInvalidFeedback(tx, ty, '仅可上下左右相邻移动');
+        return;
+      }
+
+      const targetTerrain = state.grid[ty][tx].terrain;
+      if (!TERRAIN[targetTerrain].passable) {
+        showInvalidFeedback(tx, ty, `${TERRAIN[targetTerrain].name}不可进入`);
+        return;
+      }
+
+      state.player.x = tx;
+      state.player.y = ty;
+      state.movingLock = true;
+      renderBoard();
+      processTerrainEffect(targetTerrain, tx, ty);
+      updateSideInfo();
+      setTimeout(() => { state.movingLock = false; renderBoard(); }, 180);
+    }
+
+    function setupKeyboard() {
+      window.addEventListener('keydown', (e) => {
+        if (state.mode !== 'PLAY' || !state.player || state.gameOver) return;
+        const map = {
+          ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0],
+          w: [0, -1], s: [0, 1], a: [-1, 0], d: [1, 0]
+        };
+        const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+        if (!map[key]) return;
+        e.preventDefault();
+        const [dx, dy] = map[key];
+        tryMoveTo(state.player.x + dx, state.player.y + dy);
+      });
+    }
+
+    function resetMapToRoad() {
+      const changes = [];
+      for (const row of state.grid) {
+        for (const c of row) {
+          if (c.terrain !== 'ROAD') {
+            changes.push({ x: c.x, y: c.y, before: c.terrain, after: 'ROAD' });
+            c.terrain = 'ROAD';
+          }
+        }
+      }
+      if (changes.length) pushHistory(changes);
+      renderBoard();
+      tip('地图已重置为道路。');
+    }
+
+    function resizeOrNewMap() {
+      if (state.mode !== 'EDITOR') {
+        tip('请先返回编辑模式再修改尺寸。');
+        return;
+      }
+      const w = Math.max(2, Math.min(60, Number(el.widthInput.value) || 12));
+      const h = Math.max(2, Math.min(60, Number(el.heightInput.value) || 12));
+      if (!confirm(`确认重建地图为 ${w} x ${h} 吗？当前地图将被清空。`)) return;
+      state.width = w;
+      state.height = h;
+      state.grid = createGrid(w, h, 'ROAD');
+      state.history = [];
+      state.historyIndex = -1;
+      renderBoard();
+      refreshUndoRedo();
+      tip(`地图已重建：${w} x ${h}`);
+    }
+
+    function saveMap() {
+      const mapData = {
+        width: state.width,
+        height: state.height,
+        grid: state.grid.map(row => row.map(c => c.terrain))
+      };
+      const blob = new Blob([JSON.stringify(mapData, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `map_${state.width}x${state.height}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      tip('地图已保存（JSON）。');
+    }
+
+    function loadMapFromFile(file) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const data = JSON.parse(String(reader.result));
+          if (!Number.isInteger(data.width) || !Number.isInteger(data.height) || !Array.isArray(data.grid)) {
+            throw new Error('格式非法');
+          }
+          const grid = createGrid(data.width, data.height, 'ROAD');
+          for (let y = 0; y < data.height; y++) {
+            for (let x = 0; x < data.width; x++) {
+              const t = data.grid?.[y]?.[x];
+              grid[y][x].terrain = TERRAIN[t] ? t : 'ROAD';
+            }
+          }
+          state.width = data.width;
+          state.height = data.height;
+          state.grid = grid;
+          state.history = [];
+          state.historyIndex = -1;
+          if (state.mode === 'PLAY') backToEditorMode();
+          renderBoard();
+          refreshUndoRedo();
+          el.widthInput.value = state.width;
+          el.heightInput.value = state.height;
+          tip('地图读取成功。');
+        } catch (err) {
+          tip(`读取失败：${err.message}`);
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    function restartGame() {
+      if (state.mode !== 'PLAY') return;
+      const spawn = randomRoadCell();
+      if (!spawn) {
+        tip('地图无道路格，无法重新开始。');
+        return;
+      }
+      state.player = { x: spawn.x, y: spawn.y, hp: 10, roadStepCounter: 0 };
+      state.gameOver = false;
+      el.gameOverModal.classList.remove('show');
+      renderBoard();
+      tip('已重新开始。');
+    }
+
+    function init() {
+      state.grid = createGrid(state.width, state.height);
+      renderTerrainPanel();
+      renderBoard();
+      setupKeyboard();
+      refreshUndoRedo();
+
+      el.newMapBtn.onclick = resizeOrNewMap;
+      el.resetBtn.onclick = resetMapToRoad;
+      el.undoBtn.onclick = undo;
+      el.redoBtn.onclick = redo;
+      el.modeBtn.onclick = () => state.mode === 'EDITOR' ? startPlayMode() : backToEditorMode();
+      el.saveBtn.onclick = saveMap;
+      el.loadBtn.onclick = () => el.loadFileInput.click();
+      el.loadFileInput.onchange = (ev) => {
+        const file = ev.target.files?.[0];
+        if (file) loadMapFromFile(file);
+        ev.target.value = '';
+      };
+      el.restartBtn.onclick = restartGame;
+    }
+
+    init();
+  </script>
 </body>
 </html>
