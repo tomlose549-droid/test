@@ -114,6 +114,7 @@
     }
 
     .symbol { opacity: .92; pointer-events: none; }
+    .marker { position:absolute; left:4px; top:2px; font-size:12px; z-index:4; }
     .player {
       position: absolute;
       width: 70%;
@@ -183,6 +184,71 @@
       color: #d6e3f3;
     }
 
+
+
+    .board-wrap { position: relative; }
+
+    body.game-over-shake {
+      animation: gameOverShake 80ms linear 6;
+    }
+    @keyframes gameOverShake {
+      0% { transform: translate(0,0); }
+      25% { transform: translate(4px,-2px); }
+      50% { transform: translate(-4px,2px); }
+      75% { transform: translate(3px,1px); }
+      100% { transform: translate(0,0); }
+    }
+
+    #redFlash {
+      position: fixed;
+      inset: 0;
+      background: rgba(200, 20, 20, 0.35);
+      opacity: 0;
+      pointer-events: none;
+      z-index: 18;
+    }
+    #redFlash.show { animation: redFlash 500ms ease-in-out; }
+    @keyframes redFlash {
+      0%, 100% { opacity: 0; }
+      20%, 60% { opacity: 1; }
+    }
+
+    #gameOverScreen {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 12px;
+      z-index: 19;
+      pointer-events: none;
+    }
+    #gameOverScreen.show {
+      display: flex;
+      animation: gameOverFade 700ms ease forwards;
+    }
+    @keyframes gameOverFade {
+      from { background: rgba(0,0,0,0); }
+      to { background: rgba(0,0,0,.88); }
+    }
+    #gameOverText {
+      color: #ff7373;
+      font-size: clamp(28px, 7vw, 64px);
+      font-weight: 900;
+      letter-spacing: .08em;
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    #gameOverScreen.show #gameOverText {
+      animation: textFadeIn 700ms 160ms ease forwards;
+    }
+    @keyframes textFadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
     #gameOverModal {
       position: fixed;
       inset: 0;
@@ -205,8 +271,8 @@
 <body>
   <header>
     <div class="group">
-      <label>宽<input id="widthInput" type="number" min="2" max="60" value="12" style="width:70px"/></label>
-      <label>高<input id="heightInput" type="number" min="2" max="60" value="12" style="width:70px"/></label>
+      <label>宽<input id="widthInput" type="number" min="2" max="60" value="10" style="width:70px"/></label>
+      <label>高<input id="heightInput" type="number" min="2" max="60" value="10" style="width:70px"/></label>
       <button id="newMapBtn">新建/改尺寸</button>
       <button id="resetBtn">重置为道路</button>
     </div>
@@ -245,6 +311,11 @@
 
   <footer id="tipBar">准备就绪。</footer>
 
+  <div id="redFlash"></div>
+  <div id="gameOverScreen">
+    <div id="gameOverText">Game Over</div>
+  </div>
+
   <div id="gameOverModal">
     <div class="modal">
       <h3>血量为零，游戏结束！</h3>
@@ -263,8 +334,8 @@
     const TERRAIN_KEYS = Object.keys(TERRAIN);
 
     const state = {
-      width: 12,
-      height: 12,
+      width: 10,
+      height: 10,
       grid: [],
       mode: 'EDITOR',
       brush: 'ROAD',
@@ -273,7 +344,10 @@
       dragStart: null,
       player: null,
       gameOver: false,
-      movingLock: false
+      movingLock: false,
+      spawn: null,
+      goal: null,
+      audioCtx: null
     };
 
     const el = {
@@ -295,6 +369,8 @@
       roadCounterText: document.getElementById('roadCounterText'),
       tipBar: document.getElementById('tipBar'),
       gameOverModal: document.getElementById('gameOverModal'),
+      gameOverScreen: document.getElementById('gameOverScreen'),
+      redFlash: document.getElementById('redFlash'),
       restartBtn: document.getElementById('restartBtn')
     };
 
@@ -310,6 +386,154 @@
 
     function cloneGrid(grid) {
       return grid.map(row => row.map(c => ({ ...c })));
+    }
+
+    function randInt(min, max) {
+      return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+
+    function pickRandom(list) {
+      return list[Math.floor(Math.random() * list.length)];
+    }
+
+    function generateMainRoad(w, h) {
+      const cells = [];
+      let x = 0;
+      let y = randInt(0, h - 1);
+      cells.push({ x, y });
+      while (x < w - 1) {
+        const options = [];
+        options.push({ x: x + 1, y, weight: 4 });
+        if (y > 0) options.push({ x, y: y - 1, weight: 1 });
+        if (y < h - 1) options.push({ x, y: y + 1, weight: 1 });
+        const pool = options.flatMap(o => Array.from({ length: o.weight }, () => o));
+        const next = pickRandom(pool);
+        x = next.x;
+        y = next.y;
+        if (!cells.some(c => c.x === x && c.y === y)) cells.push({ x, y });
+      }
+      return cells;
+    }
+
+    function autoGenerateMap(w = 10, h = 10) {
+      const grid = createGrid(w, h, 'FOREST');
+      const mainRoad = generateMainRoad(w, h);
+      const roadSet = new Set(mainRoad.map(c => `${c.x},${c.y}`));
+
+      const branchCount = randInt(2, 4);
+      for (let i = 0; i < branchCount; i++) {
+        const base = pickRandom(mainRoad);
+        let x = base.x;
+        let y = base.y;
+        const steps = randInt(2, 5);
+        for (let j = 0; j < steps; j++) {
+          const moves = [
+            [1, 0], [-1, 0], [0, 1], [0, -1]
+          ].map(([dx, dy]) => ({ x: x + dx, y: y + dy }))
+            .filter(p => isInBoundsStatic(p.x, p.y, w, h));
+          if (!moves.length) break;
+          const next = pickRandom(moves);
+          x = next.x; y = next.y;
+          roadSet.add(`${x},${y}`);
+        }
+      }
+
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const key = `${x},${y}`;
+          if (roadSet.has(key)) {
+            grid[y][x].terrain = 'ROAD';
+          } else {
+            grid[y][x].terrain = pickRandom(['FOREST', 'MOUNTAIN', 'WATER']);
+          }
+        }
+      }
+
+      const spawn = mainRoad[0];
+      const goal = mainRoad[mainRoad.length - 1];
+
+      const candidates = [];
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const key = `${x},${y}`;
+          if (x === spawn.x && y === spawn.y) continue;
+          if (key === `${goal.x},${goal.y}`) continue;
+          if (mainRoad.some(c => c.x === x && c.y === y)) continue;
+          candidates.push({ x, y });
+        }
+      }
+
+      const minFire = Math.ceil(w * h * 0.2);
+      const fireCount = Math.min(candidates.length, randInt(minFire, Math.max(minFire, minFire + 6)));
+      for (let i = 0; i < fireCount; i++) {
+        const idx = randInt(0, candidates.length - 1);
+        const c = candidates.splice(idx, 1)[0];
+        grid[c.y][c.x].terrain = 'FIRE';
+      }
+
+      return { grid, spawn, goal };
+    }
+
+    function isInBoundsStatic(x, y, w, h) {
+      return x >= 0 && y >= 0 && x < w && y < h;
+    }
+
+    function ensureAudioContext() {
+      if (!state.audioCtx) state.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (state.audioCtx.state === 'suspended') state.audioCtx.resume();
+      return state.audioCtx;
+    }
+
+    function playTone({ freq = 440, type = 'sine', duration = 0.2, volume = 0.05, loopRate = 0 }) {
+      const ctx = ensureAudioContext();
+      const start = ctx.currentTime;
+      const end = start + duration;
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(volume, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, end);
+      gain.connect(ctx.destination);
+
+      if (loopRate > 0) {
+        let t = start;
+        while (t < end) {
+          const osc = ctx.createOscillator();
+          osc.type = type;
+          osc.frequency.setValueAtTime(freq, t);
+          osc.connect(gain);
+          osc.start(t);
+          osc.stop(Math.min(end, t + loopRate * 0.9));
+          t += loopRate;
+        }
+      } else {
+        const osc = ctx.createOscillator();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, start);
+        osc.connect(gain);
+        osc.start(start);
+        osc.stop(end);
+      }
+    }
+
+    function playRoadStepSound() {
+      playTone({ freq: 520, type: 'triangle', duration: 0.09, volume: 0.04 });
+    }
+
+    function playFireSound() {
+      playTone({ freq: 180, type: 'sawtooth', duration: 0.95, volume: 0.035, loopRate: 0.12 });
+    }
+
+    function playGameOverSound() {
+      playTone({ freq: 130, type: 'square', duration: 0.95, volume: 0.04, loopRate: 0.15 });
+    }
+
+    function fitBoardToViewport() {
+      const wrap = document.querySelector('.board-wrap');
+      if (!wrap) return;
+      const usableW = Math.max(320, wrap.clientWidth - 24);
+      const usableH = Math.max(320, wrap.clientHeight - 24);
+      const size = Math.max(24, Math.min(46, Math.floor(Math.min(usableW / state.width, usableH / state.height))));
+      document.documentElement.style.setProperty('--cell-size', `${size}px`);
     }
 
     function pushHistory(changes) {
@@ -371,6 +595,7 @@
     }
 
     function renderBoard() {
+      fitBoardToViewport();
       el.board.style.gridTemplateColumns = `repeat(${state.width}, var(--cell-size))`;
       el.board.innerHTML = '';
 
@@ -383,6 +608,12 @@
           d.dataset.y = y;
           d.dataset.terrain = cell.terrain;
           d.innerHTML = `<span class="symbol">${terrainSymbol(cell.terrain)}</span>`;
+          if (state.spawn && state.spawn.x === x && state.spawn.y === y) {
+            d.innerHTML += '<span class="marker">🏠</span>';
+          }
+          if (state.goal && state.goal.x === x && state.goal.y === y) {
+            d.innerHTML += '<span class="marker" style="left:auto;right:4px;">🏁</span>';
+          }
 
           d.addEventListener('mousedown', onCellMouseDown);
           d.addEventListener('mouseenter', onCellMouseEnter);
@@ -466,13 +697,14 @@
     }
 
     function startPlayMode() {
-      const spawn = randomRoadCell();
+      const spawn = state.spawn || randomRoadCell();
       if (!spawn) {
         tip('没有道路格，无法进入试玩模式。');
         return;
       }
       state.mode = 'PLAY';
       state.player = { x: spawn.x, y: spawn.y, hp: 10, roadStepCounter: 0 };
+      ensureAudioContext();
       state.gameOver = false;
       el.modeBtn.textContent = '返回编辑模式';
       el.modeText.textContent = '试玩模式';
@@ -488,6 +720,9 @@
       el.modeBtn.textContent = '进入试玩模式';
       el.modeText.textContent = '编辑模式';
       el.gameOverModal.classList.remove('show');
+      el.gameOverScreen.classList.remove('show');
+      el.redFlash.classList.remove('show');
+      document.body.classList.remove('game-over-shake');
       tip('已返回编辑模式。');
       refreshUndoRedo();
       renderBoard();
@@ -546,14 +781,29 @@
       }
     }
 
+    function triggerGameOverSequence() {
+      playGameOverSound();
+      document.body.classList.add('game-over-shake');
+      el.redFlash.classList.remove('show');
+      void el.redFlash.offsetWidth;
+      el.redFlash.classList.add('show');
+      setTimeout(() => {
+        document.body.classList.remove('game-over-shake');
+        el.gameOverScreen.classList.add('show');
+        el.gameOverModal.classList.add('show');
+      }, 500);
+    }
+
     function processTerrainEffect(terrain, x, y) {
       if (!state.player) return;
       if (terrain === 'FIRE') {
         state.player.hp -= 1;
         triggerFireFeedback(x, y);
+        playFireSound();
         tip('踩到火焰，HP -1');
       } else if (terrain === 'ROAD') {
         state.player.roadStepCounter += 1;
+        playRoadStepSound();
         if (state.player.roadStepCounter === 2) {
           state.player.hp = Math.min(10, state.player.hp + 1);
           state.player.roadStepCounter = 0;
@@ -566,7 +816,7 @@
       if (state.player.hp <= 0) {
         state.player.hp = 0;
         state.gameOver = true;
-        el.gameOverModal.classList.add('show');
+        triggerGameOverSequence();
       }
     }
 
@@ -623,6 +873,8 @@
         }
       }
       if (changes.length) pushHistory(changes);
+      state.spawn = null;
+      state.goal = null;
       renderBoard();
       tip('地图已重置为道路。');
     }
@@ -632,17 +884,22 @@
         tip('请先返回编辑模式再修改尺寸。');
         return;
       }
-      const w = Math.max(2, Math.min(60, Number(el.widthInput.value) || 12));
-      const h = Math.max(2, Math.min(60, Number(el.heightInput.value) || 12));
-      if (!confirm(`确认重建地图为 ${w} x ${h} 吗？当前地图将被清空。`)) return;
+      const w = 10;
+      const h = 10;
+      if (!confirm(`确认自动生成 ${w} x ${h} 地图吗？当前地图将被清空。`)) return;
+      const generated = autoGenerateMap(w, h);
       state.width = w;
       state.height = h;
-      state.grid = createGrid(w, h, 'ROAD');
+      state.grid = generated.grid;
+      state.spawn = generated.spawn;
+      state.goal = generated.goal;
       state.history = [];
       state.historyIndex = -1;
+      el.widthInput.value = w;
+      el.heightInput.value = h;
       renderBoard();
       refreshUndoRedo();
-      tip(`地图已重建：${w} x ${h}`);
+      tip(`地图已自动生成：${w} x ${h}（含连续主干道）`);
     }
 
     function saveMap() {
@@ -678,6 +935,8 @@
           state.width = data.width;
           state.height = data.height;
           state.grid = grid;
+          state.spawn = null;
+          state.goal = null;
           state.history = [];
           state.historyIndex = -1;
           if (state.mode === 'PLAY') backToEditorMode();
@@ -701,17 +960,29 @@
         return;
       }
       state.player = { x: spawn.x, y: spawn.y, hp: 10, roadStepCounter: 0 };
+      ensureAudioContext();
       state.gameOver = false;
       el.gameOverModal.classList.remove('show');
+      el.gameOverScreen.classList.remove('show');
+      el.redFlash.classList.remove('show');
+      document.body.classList.remove('game-over-shake');
       renderBoard();
       tip('已重新开始。');
     }
 
     function init() {
-      state.grid = createGrid(state.width, state.height);
+      const generated = autoGenerateMap(state.width, state.height);
+      state.grid = generated.grid;
+      state.spawn = generated.spawn;
+      state.goal = generated.goal;
+      el.widthInput.value = state.width;
+      el.heightInput.value = state.height;
+      el.widthInput.disabled = true;
+      el.heightInput.disabled = true;
       renderTerrainPanel();
       renderBoard();
       setupKeyboard();
+      window.addEventListener('resize', renderBoard);
       refreshUndoRedo();
 
       el.newMapBtn.onclick = resizeOrNewMap;
