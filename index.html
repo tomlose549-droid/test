@@ -175,6 +175,26 @@
       margin: 8px 0;
     }
     .status { color: var(--muted); font-size: 14px; }
+    .touch-controls {
+      margin-top: 12px;
+      display: grid;
+      grid-template-columns: repeat(3, 52px);
+      grid-template-rows: repeat(2, 46px);
+      gap: 8px;
+      justify-content: center;
+      touch-action: manipulation;
+      user-select: none;
+    }
+    .touch-btn {
+      font-size: 20px;
+      font-weight: 700;
+      border-radius: 10px;
+      min-height: 44px;
+    }
+    .touch-btn:active {
+      transform: scale(0.96);
+      border-color: var(--accent);
+    }
 
     footer {
       min-height: 42px;
@@ -273,6 +293,43 @@
     }
     .modal h3 { margin: 0; }
 
+    #winOverlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.62);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 21;
+    }
+    #winOverlay.show { display: flex; }
+    .win-modal {
+      background: #1f2630;
+      border: 1px solid #3b4a59;
+      border-radius: 14px;
+      width: min(90vw, 380px);
+      text-align: center;
+      padding: 26px 20px;
+      box-shadow: 0 10px 28px rgba(0,0,0,.38);
+      transform: scale(0.82);
+      opacity: 0;
+    }
+    #winOverlay.show .win-modal {
+      animation: winPop 420ms ease forwards;
+    }
+    @keyframes winPop {
+      0% { transform: scale(0.82); opacity: 0; }
+      55% { transform: scale(1.08); opacity: 1; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+    .win-title {
+      margin: 0 0 14px;
+      color: #7df2b0;
+      font-size: clamp(28px, 6vw, 42px);
+      font-weight: 900;
+      letter-spacing: .04em;
+    }
+
     .goal-cell {
       box-shadow: inset 0 0 0 2px #ffd966, 0 0 12px rgba(255, 217, 102, .65);
       animation: goalPulse 1.2s ease-in-out infinite;
@@ -322,6 +379,14 @@
       <div class="hp">HP: <span id="hpText">-</span></div>
       <div>道路计数：<span id="roadCounterText">-</span></div>
       <p class="status">试玩移动：键盘方向键 / WASD，或点击相邻格。</p>
+      <div id="touchControls" class="touch-controls">
+        <button class="touch-btn" data-dx="0" data-dy="-1">↑</button>
+        <span></span>
+        <button class="touch-btn" data-dx="0" data-dy="1">↓</button>
+        <button class="touch-btn" data-dx="-1" data-dy="0">←</button>
+        <span></span>
+        <button class="touch-btn" data-dx="1" data-dy="0">→</button>
+      </div>
     </section>
   </main>
 
@@ -336,6 +401,13 @@
     <div class="modal">
       <h3>游戏结束</h3>
       <button id="restartBtn">重新开始</button>
+    </div>
+  </div>
+
+  <div id="winOverlay">
+    <div class="win-modal">
+      <h2 class="win-title">游戏胜利！</h2>
+      <button id="winRestartBtn">重新开始</button>
     </div>
   </div>
 
@@ -363,6 +435,7 @@
       movingLock: false,
       spawn: null,
       goal: null,
+      gameWon: false,
       audioCtx: null,
       fireLakeCounter: new Map()
     };
@@ -389,7 +462,10 @@
       gameOverModal: document.getElementById('gameOverModal'),
       gameOverScreen: document.getElementById('gameOverScreen'),
       redFlash: document.getElementById('redFlash'),
-      restartBtn: document.getElementById('restartBtn')
+      restartBtn: document.getElementById('restartBtn'),
+      touchControls: document.getElementById('touchControls'),
+      winOverlay: document.getElementById('winOverlay'),
+      winRestartBtn: document.getElementById('winRestartBtn')
     };
 
     function tip(text) {
@@ -543,6 +619,26 @@
 
     function playGameOverSound() {
       playTone({ freq: 130, type: 'square', duration: 0.95, volume: 0.04, loopRate: 0.15 });
+    }
+
+    function playVictorySound() {
+      const ctx = ensureAudioContext();
+      const now = ctx.currentTime;
+      const tones = [523.25, 659.25, 783.99, 1046.5];
+      tones.forEach((freq, idx) => {
+        const t = now + idx * 0.12;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, t);
+        gain.gain.setValueAtTime(0.0001, t);
+        gain.gain.exponentialRampToValueAtTime(0.06, t + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(t);
+        osc.stop(t + 0.18);
+      });
     }
 
     function fitBoardToViewport() {
@@ -700,7 +796,7 @@
     }
 
     function onCellClickPlay(e) {
-      if (state.mode !== 'PLAY' || !state.player || state.gameOver) return;
+      if (state.mode !== 'PLAY' || !state.player || state.gameOver || state.gameWon) return;
       const x = Number(e.currentTarget.dataset.x);
       const y = Number(e.currentTarget.dataset.y);
       tryMoveTo(x, y);
@@ -725,6 +821,9 @@
       state.player = { x: spawn.x, y: spawn.y, hp: 10, roadStepCounter: 0 };
       ensureAudioContext();
       state.gameOver = false;
+      state.gameWon = false;
+      state.movingLock = false;
+      el.winOverlay.classList.remove('show');
       el.modeBtn.textContent = '返回编辑模式';
       el.modeText.textContent = '试玩模式';
       tip('已进入试玩模式。');
@@ -736,11 +835,14 @@
       state.mode = 'EDITOR';
       state.player = null;
       state.gameOver = false;
+      state.gameWon = false;
+      state.movingLock = false;
       el.modeBtn.textContent = '进入试玩模式';
       el.modeText.textContent = '编辑模式';
       el.gameOverModal.classList.remove('show');
       el.gameOverScreen.classList.remove('show');
       el.redFlash.classList.remove('show');
+      el.winOverlay.classList.remove('show');
       document.body.classList.remove('game-over-shake');
       tip('已返回编辑模式。');
       refreshUndoRedo();
@@ -813,6 +915,14 @@
       }, 500);
     }
 
+    function triggerVictorySequence() {
+      state.gameWon = true;
+      state.movingLock = true;
+      playVictorySound();
+      el.winOverlay.classList.add('show');
+      tip('到达终点，游戏胜利！');
+    }
+
     function processTerrainEffect(terrain, x, y) {
       if (!state.player) return;
       if (terrain === 'FIRE') {
@@ -820,16 +930,13 @@
         triggerFireFeedback(x, y);
         playFireSound();
         tip('踩到火焰，HP -1');
+        state.player.roadStepCounter = 0;
       } else if (terrain === 'ROAD') {
         state.player.roadStepCounter += 1;
         playRoadStepSound();
-        if (state.player.roadStepCounter === 2) {
-          state.player.hp = Math.min(10, state.player.hp + 1);
-          state.player.roadStepCounter = 0;
-          tip('道路累计2步，HP +1');
-        } else {
-          tip('进入道路，累计步数 +1');
-        }
+        tip('进入道路，累计步数 +1');
+      } else {
+        state.player.roadStepCounter = 0;
       }
 
       if (state.player.hp <= 0) {
@@ -905,14 +1012,20 @@
       state.movingLock = true;
       renderBoard();
       processTerrainEffect(targetTerrain, tx, ty);
+      if (!state.gameOver && state.goal && tx === state.goal.x && ty === state.goal.y) {
+        triggerVictorySequence();
+      }
       evolveTerrainPerTurn();
       updateSideInfo();
-      setTimeout(() => { state.movingLock = false; renderBoard(); }, 180);
+      setTimeout(() => {
+        state.movingLock = state.gameWon;
+        renderBoard();
+      }, 180);
     }
 
     function setupKeyboard() {
       window.addEventListener('keydown', (e) => {
-        if (state.mode !== 'PLAY' || !state.player || state.gameOver) return;
+        if (state.mode !== 'PLAY' || !state.player || state.gameOver || state.gameWon) return;
         const map = {
           ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0],
           w: [0, -1], s: [0, 1], a: [-1, 0], d: [1, 0]
@@ -923,6 +1036,19 @@
         const [dx, dy] = map[key];
         tryMoveTo(state.player.x + dx, state.player.y + dy);
       });
+    }
+
+    function setupTouchControls() {
+      const buttons = el.touchControls.querySelectorAll('.touch-btn');
+      for (const btn of buttons) {
+        btn.addEventListener('pointerdown', (e) => {
+          if (state.mode !== 'PLAY' || !state.player || state.gameOver || state.gameWon) return;
+          e.preventDefault();
+          const dx = Number(btn.dataset.dx);
+          const dy = Number(btn.dataset.dy);
+          tryMoveTo(state.player.x + dx, state.player.y + dy);
+        });
+      }
     }
 
     function resetMapToRoad() {
@@ -1046,9 +1172,12 @@
       state.fireLakeCounter = new Map();
       ensureAudioContext();
       state.gameOver = false;
+      state.gameWon = false;
+      state.movingLock = false;
       el.gameOverModal.classList.remove('show');
       el.gameOverScreen.classList.remove('show');
       el.redFlash.classList.remove('show');
+      el.winOverlay.classList.remove('show');
       document.body.classList.remove('game-over-shake');
       renderBoard();
       tip('已重新开始。');
@@ -1067,6 +1196,7 @@
       renderTerrainPanel();
       renderBoard();
       setupKeyboard();
+      setupTouchControls();
       window.addEventListener('resize', renderBoard);
       refreshUndoRedo();
 
@@ -1084,6 +1214,7 @@
         ev.target.value = '';
       };
       el.restartBtn.onclick = restartGame;
+      el.winRestartBtn.onclick = restartGame;
     }
 
     init();
