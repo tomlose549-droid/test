@@ -254,8 +254,9 @@
       inset: 0;
       background: rgba(0,0,0,.55);
       display: none;
-      align-items: center;
+      align-items: flex-end;
       justify-content: center;
+      padding-bottom: 11vh;
       z-index: 20;
     }
     #gameOverModal.show { display: flex; }
@@ -263,8 +264,22 @@
       background: #1f2630;
       border: 1px solid #3b4a59;
       border-radius: 12px;
-      padding: 20px;
+      padding: 20px 22px 26px;
       width: min(90vw, 360px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+    .modal h3 { margin: 0; }
+
+    .goal-cell {
+      box-shadow: inset 0 0 0 2px #ffd966, 0 0 12px rgba(255, 217, 102, .65);
+      animation: goalPulse 1.2s ease-in-out infinite;
+    }
+    @keyframes goalPulse {
+      0%, 100% { filter: brightness(1); }
+      50% { filter: brightness(1.25); }
     }
   </style>
 </head>
@@ -274,6 +289,7 @@
       <label>宽<input id="widthInput" type="number" min="2" max="60" value="10" style="width:70px"/></label>
       <label>高<input id="heightInput" type="number" min="2" max="60" value="10" style="width:70px"/></label>
       <button id="newMapBtn">新建/改尺寸</button>
+      <button id="randomMapBtn">随机生成地图</button>
       <button id="resetBtn">重置为道路</button>
     </div>
     <div class="group">
@@ -318,7 +334,7 @@
 
   <div id="gameOverModal">
     <div class="modal">
-      <h3>血量为零，游戏结束！</h3>
+      <h3>游戏结束</h3>
       <button id="restartBtn">重新开始</button>
     </div>
   </div>
@@ -347,13 +363,15 @@
       movingLock: false,
       spawn: null,
       goal: null,
-      audioCtx: null
+      audioCtx: null,
+      fireLakeCounter: new Map()
     };
 
     const el = {
       widthInput: document.getElementById('widthInput'),
       heightInput: document.getElementById('heightInput'),
       newMapBtn: document.getElementById('newMapBtn'),
+      randomMapBtn: document.getElementById('randomMapBtn'),
       resetBtn: document.getElementById('resetBtn'),
       undoBtn: document.getElementById('undoBtn'),
       redoBtn: document.getElementById('redoBtn'),
@@ -612,6 +630,7 @@
             d.innerHTML += '<span class="marker">🏠</span>';
           }
           if (state.goal && state.goal.x === x && state.goal.y === y) {
+            d.classList.add('goal-cell');
             d.innerHTML += '<span class="marker" style="left:auto;right:4px;">🏁</span>';
           }
 
@@ -820,6 +839,49 @@
       }
     }
 
+    function getNeighbors4(x, y) {
+      return [
+        [x + 1, y],
+        [x - 1, y],
+        [x, y + 1],
+        [x, y - 1]
+      ].filter(([nx, ny]) => isInBounds(nx, ny));
+    }
+
+    function hasNeighborTerrain(x, y, terrain) {
+      return getNeighbors4(x, y).some(([nx, ny]) => state.grid[ny][nx].terrain === terrain);
+    }
+
+    function evolveTerrainPerTurn() {
+      const toFire = [];
+      const toForest = [];
+      const nextCounter = new Map();
+
+      for (let y = 0; y < state.height; y++) {
+        for (let x = 0; x < state.width; x++) {
+          const cell = state.grid[y][x];
+          const key = `${x},${y}`;
+          if (cell.terrain === 'FOREST' && hasNeighborTerrain(x, y, 'FIRE')) {
+            toFire.push({ x, y });
+          }
+          if (cell.terrain === 'FIRE') {
+            if (hasNeighborTerrain(x, y, 'WATER')) {
+              const turns = (state.fireLakeCounter.get(key) || 0) + 1;
+              if (turns >= 3) {
+                toForest.push({ x, y });
+              } else {
+                nextCounter.set(key, turns);
+              }
+            }
+          }
+        }
+      }
+
+      for (const p of toFire) state.grid[p.y][p.x].terrain = 'FIRE';
+      for (const p of toForest) state.grid[p.y][p.x].terrain = 'FOREST';
+      state.fireLakeCounter = nextCounter;
+    }
+
     function tryMoveTo(tx, ty) {
       if (!state.player || state.movingLock) return;
       if (!isInBounds(tx, ty)) {
@@ -843,6 +905,7 @@
       state.movingLock = true;
       renderBoard();
       processTerrainEffect(targetTerrain, tx, ty);
+      evolveTerrainPerTurn();
       updateSideInfo();
       setTimeout(() => { state.movingLock = false; renderBoard(); }, 180);
     }
@@ -875,6 +938,7 @@
       if (changes.length) pushHistory(changes);
       state.spawn = null;
       state.goal = null;
+      state.fireLakeCounter = new Map();
       renderBoard();
       tip('地图已重置为道路。');
     }
@@ -893,6 +957,7 @@
       state.grid = generated.grid;
       state.spawn = generated.spawn;
       state.goal = generated.goal;
+      state.fireLakeCounter = new Map();
       state.history = [];
       state.historyIndex = -1;
       el.widthInput.value = w;
@@ -900,6 +965,23 @@
       renderBoard();
       refreshUndoRedo();
       tip(`地图已自动生成：${w} x ${h}（含连续主干道）`);
+    }
+
+    function regenerateMap() {
+      if (state.mode !== 'EDITOR') {
+        tip('请先返回编辑模式再随机生成地图。');
+        return;
+      }
+      const generated = autoGenerateMap(state.width, state.height);
+      state.grid = generated.grid;
+      state.spawn = generated.spawn;
+      state.goal = generated.goal;
+      state.fireLakeCounter = new Map();
+      state.history = [];
+      state.historyIndex = -1;
+      renderBoard();
+      refreshUndoRedo();
+      tip(`已随机生成地图：${state.width} x ${state.height}`);
     }
 
     function saveMap() {
@@ -937,6 +1019,7 @@
           state.grid = grid;
           state.spawn = null;
           state.goal = null;
+          state.fireLakeCounter = new Map();
           state.history = [];
           state.historyIndex = -1;
           if (state.mode === 'PLAY') backToEditorMode();
@@ -960,6 +1043,7 @@
         return;
       }
       state.player = { x: spawn.x, y: spawn.y, hp: 10, roadStepCounter: 0 };
+      state.fireLakeCounter = new Map();
       ensureAudioContext();
       state.gameOver = false;
       el.gameOverModal.classList.remove('show');
@@ -975,6 +1059,7 @@
       state.grid = generated.grid;
       state.spawn = generated.spawn;
       state.goal = generated.goal;
+      state.fireLakeCounter = new Map();
       el.widthInput.value = state.width;
       el.heightInput.value = state.height;
       el.widthInput.disabled = true;
@@ -986,6 +1071,7 @@
       refreshUndoRedo();
 
       el.newMapBtn.onclick = resizeOrNewMap;
+      el.randomMapBtn.onclick = regenerateMap;
       el.resetBtn.onclick = resetMapToRoad;
       el.undoBtn.onclick = undo;
       el.redoBtn.onclick = redo;
